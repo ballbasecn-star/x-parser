@@ -5,9 +5,13 @@ This module provides an MCP (Model Context Protocol) server that allows
 AI assistants to parse Twitter/X tweets.
 
 Usage:
+    # Local (stdio)
     python -m mcp_server.server
 
-Or add to Claude Desktop config:
+    # Remote (HTTP/SSE)
+    python -m mcp_server.server --transport sse --port 8080
+
+Claude Desktop config (local):
     {
         "mcpServers": {
             "x-parser": {
@@ -19,9 +23,19 @@ Or add to Claude Desktop config:
             }
         }
     }
+
+Claude Code config (remote):
+    {
+        "mcpServers": {
+            "x-parser": {
+                "url": "https://your-server.com/sse"
+            }
+        }
+    }
 """
 import os
-import json
+import sys
+import argparse
 import logging
 from typing import Any
 
@@ -31,7 +45,7 @@ try:
     from mcp.types import Tool, TextContent
 except ImportError:
     print("MCP package not installed. Run: pip install mcp")
-    exit(1)
+    sys.exit(1)
 
 # Load environment variables
 try:
@@ -182,14 +196,74 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
 def main():
     """Run the MCP server."""
+    parser = argparse.ArgumentParser(description="X Parser MCP Server")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse"],
+        default="stdio",
+        help="Transport type: stdio (local) or sse (remote)"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("PORT", "8080")),
+        help="Port for SSE transport (default: 8080)"
+    )
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Host for SSE transport (default: 0.0.0.0)"
+    )
+
+    args = parser.parse_args()
+
     # Check for API key
     if not os.getenv("TAVILY_API_KEY"):
         logger.warning("TAVILY_API_KEY not set. Set it in environment variables.")
 
-    logger.info("Starting X Parser MCP Server...")
-
     import asyncio
-    asyncio.run(stdio_server(server).serve())
+
+    if args.transport == "stdio":
+        logger.info("Starting X Parser MCP Server (stdio mode)...")
+        asyncio.run(stdio_server(server).serve())
+    else:
+        # SSE mode for remote deployment
+        logger.info(f"Starting X Parser MCP Server (SSE mode) on {args.host}:{args.port}...")
+        try:
+            from mcp.server.sse import SseServerTransport
+            from starlette.applications import Starlette
+            from starlette.routing import Route
+        except ImportError as e:
+            print(f"SSE transport requires additional packages: {e}")
+            print("Install with: pip install mcp[cli] starlette uvicorn")
+            sys.exit(1)
+
+        sse = SseServerTransport("/messages")
+
+        async def handle_sse(request):
+            async with sse.connect_sse(
+                request.scope,
+                request.receive,
+                request._send,
+            ) as streams:
+                await server.run(
+                    streams[0],
+                    streams[1],
+                    server.create_initialization_options(),
+                )
+
+        async def handle_messages(request):
+            await sse.handle_post_message(request._receive, request._send)
+
+        app = Starlette(
+            routes=[
+                Route("/sse", endpoint=handle_sse),
+                Route("/messages", endpoint=handle_messages, methods=["POST"]),
+            ]
+        )
+
+        import uvicorn
+        uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

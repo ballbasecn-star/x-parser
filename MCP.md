@@ -111,3 +111,138 @@ Make sure the environment variable is set in your configuration or shell.
 - Check if the URL is valid
 - Verify your Tavily API key is working
 - Check if the tweet is publicly accessible
+
+---
+
+## Cloud Deployment (Remote MCP Server)
+
+You can deploy the MCP server to the cloud and connect Claude Code remotely.
+
+### Running in SSE Mode
+
+```bash
+# Install additional dependencies
+pip install starlette uvicorn
+
+# Run with SSE transport
+python -m mcp_server.server --transport sse --port 8080
+
+# Or with environment variable
+TAVILY_API_KEY=your_key python -m mcp_server.server --transport sse --port 8080
+```
+
+The server will be available at:
+- SSE endpoint: `http://localhost:8080/sse`
+- Messages: `http://localhost:8080/messages`
+
+### Claude Code Configuration (Remote)
+
+In your `.claude/settings.json` or Claude Code config:
+
+```json
+{
+  "mcpServers": {
+    "x-parser": {
+      "url": "https://your-server.com/sse"
+    }
+  }
+}
+```
+
+### Deploy to Cloud Platforms
+
+#### Railway
+
+1. Create `railway.json`:
+   ```json
+   {
+     "$schema": "https://railway.app/railway.schema.json",
+     "build": {
+       "builder": "NIXPACKS"
+     },
+     "deploy": {
+       "startCommand": "python -m mcp_server.server --transport sse --port $PORT",
+       "restartPolicyType": "ON_FAILURE"
+     }
+   }
+   ```
+
+2. Set environment variable: `TAVILY_API_KEY`
+
+3. Deploy: `railway up`
+
+#### Fly.io
+
+1. Create `fly.toml`:
+   ```toml
+   app = "x-parser-mcp"
+   primary_region = "sin"
+
+   [build]
+     builder = "paketobuildpacks/builder:base"
+
+   [env]
+     PORT = "8080"
+
+   [[services]]
+     internal_port = 8080
+     protocol = "tcp"
+
+     [[services.ports]]
+       handlers = ["http"]
+       port = 80
+
+     [[services.ports]]
+       handlers = ["tls", "http"]
+       port = 443
+   ```
+
+2. Deploy:
+   ```bash
+   fly launch
+   fly secrets set TAVILY_API_KEY=your_key
+   fly deploy
+   ```
+
+#### Render
+
+1. Create a Web Service
+2. Build Command: `pip install -r requirements.txt`
+3. Start Command: `python -m mcp_server.server --transport sse --port $PORT`
+4. Add environment variable: `TAVILY_API_KEY`
+
+### Docker Deployment
+
+Create `Dockerfile`:
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV PORT=8080
+
+EXPOSE 8080
+
+CMD ["python", "-m", "mcp_server.server", "--transport", "sse", "--port", "8080"]
+```
+
+Build and run:
+```bash
+docker build -t x-parser-mcp .
+docker run -p 8080:8080 -e TAVILY_API_KEY=your_key x-parser-mcp
+```
+
+### Security Considerations
+
+When deploying to the cloud:
+
+1. **API Key Protection**: Never expose your TAVILY_API_KEY in client config
+2. **Rate Limiting**: Consider adding rate limiting to prevent abuse
+3. **Authentication**: For production, add authentication to the MCP endpoints
+4. **HTTPS**: Always use HTTPS in production
