@@ -16,3 +16,6 @@ markdown>=3.5.0
 
 # 数据验证 (可选)
 pydantic>=2.0.0
+
+# MCP (Model Context Protocol) 支持
+mcp>=1.0.0
