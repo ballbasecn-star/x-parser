@@ -82,3 +82,5 @@ uv.lock
 
 # Release bundle
 .tmp/
+
+deploy/.release.local.env
