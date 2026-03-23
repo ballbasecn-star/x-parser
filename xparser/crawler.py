@@ -121,6 +121,8 @@ class TavilyCrawler:
 
         # 从 URL 提取基本信息
         self._extract_from_url(tweet_info, url)
+        # 即使提取失败，也保留原始响应，方便上层判断是真空结果还是字段映射缺失。
+        tweet_info.raw_data = response or {}
 
         # 解析 API 响应
         results = response.get("results", [])
@@ -136,8 +138,8 @@ class TavilyCrawler:
             display_name, _ = parse_title_string(title)
             tweet_info.display_name = display_name
 
-        # 提取原始内容
-        raw_content = first_result.get("raw_content", "")
+        # 先从 Tavily 常见字段里挑一个最可信的正文候选，再统一做清洗。
+        raw_content = self._resolve_primary_content(first_result, title)
         if raw_content:
             # 清洗文本
             tweet_info.content = raw_content
@@ -171,10 +173,20 @@ class TavilyCrawler:
         videos = self._extract_videos(raw_content)
         tweet_info.videos = videos
 
-        # 保存原始数据
-        tweet_info.raw_data = response
-
         return tweet_info
+
+    def _resolve_primary_content(self, result: Dict[str, Any], title: str) -> str:
+        """优先从正文相关字段提取文本，避免只拿到 tweet id 也被当成成功。"""
+        for field_name in ("raw_content", "content", "text", "excerpt", "snippet"):
+            value = result.get(field_name)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        _, title_content = parse_title_string(title)
+        if title_content and not re.fullmatch(r"\d{6,}", title_content):
+            return title_content.strip()
+
+        return ""
 
     def _extract_from_url(self, tweet_info: TweetInfo, url: str) -> None:
         """从 URL 提取基本信息"""

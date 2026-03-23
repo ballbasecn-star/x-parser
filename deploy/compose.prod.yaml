@@ -1,0 +1,22 @@
+services:
+  x-parser:
+    image: ${X_PARSER_IMAGE:-ballbase/x-parser}:${X_PARSER_VERSION:-dev}
+    pull_policy: never
+    container_name: x-parser
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:${X_PARSER_HOST_PORT:-5000}:5000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5000/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - content-shared
+
+networks:
+  content-shared:
+    external: true

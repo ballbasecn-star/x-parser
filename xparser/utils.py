@@ -7,6 +7,23 @@ import re
 from typing import Optional, List, Tuple
 
 
+_X_SHELL_NOISE_MARKERS = [
+    "Don't miss what's happening",
+    "People on X are the first to know",
+    "[Log in]",
+    "[Sign up]",
+    "Create account",
+    "See new posts",
+    "Conversation",
+    "New to X?",
+]
+
+
+def _normalize_shell_marker_text(text: str) -> str:
+    """统一引号等符号，避免 Tavily 返回弯引号时漏掉页面噪音匹配。"""
+    return (text or "").replace("’", "'").replace("‘", "'")
+
+
 def parse_count(text: str) -> int:
     """
     解析数字字符串（支持 K/M/B 后缀）
@@ -99,8 +116,9 @@ def clean_tweet_text(raw_content: str) -> str:
     in_content = False
     skipped_author = False
 
-    for line in lines:
+    for index, line in enumerate(lines):
         stripped = line.strip()
+        normalized = _normalize_shell_marker_text(stripped.lstrip('#').strip())
 
         # 跳过开头的空行
         if not in_content and not stripped:
@@ -119,11 +137,19 @@ def clean_tweet_text(raw_content: str) -> str:
             '==========',
             '---------------',
         ]
-        if any(noise in line for noise in header_noise):
+        if any(noise in normalized for noise in header_noise):
+            continue
+
+        # X article 页面常见标题壳子，不属于正文。
+        if " on X:" in normalized and normalized.endswith("/ X"):
+            continue
+        if normalized in {"Post", "Thread"}:
+            continue
+        if normalized in {"转录原文链接：", "转录原文链接", "原文链接：", "原文链接", "作者：", "作者"}:
             continue
 
         # 跳过导航链接
-        if re.match(r'^\[\]\(https://x\.com/\)', stripped):
+        if re.match(r'^(?:#+\s*)?\[\]\(https://x\.com/\)', stripped):
             continue
         if '/article/' in stripped and '[](https://' in stripped:
             continue
@@ -134,6 +160,12 @@ def clean_tweet_text(raw_content: str) -> str:
 
         # ===== 跳过作者区域 =====
         if not skipped_author and stripped:
+            next_non_empty = ""
+            for following in lines[index + 1:]:
+                following_stripped = following.strip()
+                if following_stripped:
+                    next_non_empty = following_stripped
+                    break
             is_display_name = (
                 len(stripped) < 30 and
                 not stripped.startswith('[') and
@@ -141,7 +173,12 @@ def clean_tweet_text(raw_content: str) -> str:
                 not stripped.startswith('http') and
                 not re.search(r'\d', stripped)
             )
-            if is_display_name:
+            has_author_context = bool(
+                re.match(r'^@[\w_]+$', next_non_empty)
+                or re.match(r'^https?://x\.com/[\w_]+/?$', next_non_empty)
+                or re.match(r'^\[[^\]]+\]\(https://x\.com/[\w_]+\)$', next_non_empty)
+            )
+            if is_display_name and has_author_context:
                 skipped_author = True
                 continue
 
@@ -152,6 +189,8 @@ def clean_tweet_text(raw_content: str) -> str:
         # 跳过作者链接
         if re.search(r'^\[.+\]\(https://x\.com/', stripped) and '@' in stripped:
             skipped_author = True
+            continue
+        if re.match(r'^\[[^\]]+\]\(https://x\.com/[\w_]+\)$', stripped):
             continue
 
         # 跳过时间链接
@@ -203,7 +242,6 @@ def clean_tweet_text(raw_content: str) -> str:
 
         # ===== 保留图片 Markdown =====
         if stripped.startswith('![') or '[![Image' in stripped:
-            content_lines.append(line)
             continue
 
         # 跳过原始图片 URL
@@ -224,10 +262,37 @@ def clean_tweet_text(raw_content: str) -> str:
     content = ''.join(content_lines)
 
     # 清理多余空白
+    # 把 Markdown 链接还原成更适合阅读的纯文本，减少详情页直接显示方括号噪音。
+    content = re.sub(r'\[(https?://[^\]]+)\]\((https?://[^)]+)\)', r'\1', content)
+    content = re.sub(r'\[([^\]]+)\]\((https?://[^)]+)\)', r'\1', content)
+    # t.co 短链对阅读价值很低，优先去掉，避免标题回退正文时残留大量跳转链接。
+    content = re.sub(r'(?m)^\s*https://t\.co/\S+\s*$', '', content)
+    content = re.sub(r'\s*https://t\.co/\S+', '', content)
     content = re.sub(r'\n{3,}', '\n\n', content)
     content = content.strip()
 
     return content
+
+
+def is_probable_x_shell(raw_content: str, cleaned_content: str) -> bool:
+    """
+    判断当前结果是否只是 X 页面壳子，而不是真实正文。
+
+    典型特征：
+    - 原始内容里出现登录/注册/会话等页面文案
+    - 同时带有 article 链接，但清洗后只剩一两行标题残留
+    """
+    if not raw_content:
+        return False
+
+    normalized_raw = _normalize_shell_marker_text(raw_content)
+    noise_hits = sum(1 for marker in _X_SHELL_NOISE_MARKERS if marker in normalized_raw)
+    has_article_link = "/article/" in raw_content
+
+    lines = [line.strip() for line in (cleaned_content or "").splitlines() if line.strip()]
+    short_shell = len(lines) <= 2 and len(cleaned_content.strip()) < 160
+
+    return noise_hits >= 2 and has_article_link and short_shell
 
 
 def extract_article_title(content: str) -> Optional[str]:

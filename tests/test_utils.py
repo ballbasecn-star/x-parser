@@ -12,6 +12,7 @@ from xparser.utils import (
     parse_title_string,
     is_valid_image_url,
     filter_content_images,
+    is_probable_x_shell,
 )
 
 
@@ -96,6 +97,18 @@ Actual content here
         assert "[Log in]" not in result
         assert "[Sign up]" not in result
 
+    def test_remove_header_noise_with_curly_apostrophe(self):
+        """弯引号版本的 X 页面噪音也应被移除。"""
+        text = """Don’t miss what’s happening
+People on X are the first to know.
+
+真实正文
+"""
+        result = clean_tweet_text(text)
+        assert "Don’t miss what’s happening" not in result
+        assert "People on X are the first to know." not in result
+        assert "真实正文" in result
+
     def test_remove_footer_noise(self):
         """移除底部噪音"""
         # 模拟包含底部噪音的内容
@@ -112,6 +125,84 @@ Content here
         """空输入"""
         assert clean_tweet_text("") == ""
         assert clean_tweet_text(None) == ""
+
+    def test_remove_x_article_shell_noise(self):
+        """移除 X article 页面壳子噪音"""
+        text = """# 极客杰尼 on X: "我把公众号排版Skill上架到了ClawHub" / X
+
+Don't miss what's happening
+
+People on X are the first to know.
+
+[Log in](https://x.com/login)
+
+[Sign up](https://x.com/i/flow/signup)
+
+# [](https://x.com/)
+
+## Article
+
+[](https://x.com/seekjourney/article/2035923833707012270)
+
+See new posts
+
+## Conversation
+
+## New to X?
+"""
+        result = clean_tweet_text(text)
+        assert result == ""
+
+    def test_flatten_markdown_links(self):
+        """把 Markdown 链接压平成更适合阅读的文本"""
+        text = """链接如下：
+
+[https://example.com/article](https://example.com/article)
+
+[点这里查看原文](https://example.com/source)
+"""
+        result = clean_tweet_text(text)
+        assert "https://example.com/article" in result
+        assert "[https://example.com/article]" not in result
+        assert "点这里查看原文" in result
+        assert "[点这里查看原文]" not in result
+
+    def test_remove_article_meta_labels(self):
+        """移除 article 常见元信息标签"""
+        text = """转录原文链接：
+
+https://example.com/original
+
+作者：
+
+正文从这里开始
+"""
+        result = clean_tweet_text(text)
+        assert "转录原文链接" not in result
+        assert "作者：" not in result
+        assert "https://example.com/original" in result
+
+    def test_preserve_title_line_without_author_context(self):
+        """标题回退正文时，不能把第一行误判成作者名吞掉。"""
+        text = """我的推文做成了 skill
+https://t.co/E9MeMerSYx
+
+一行安装
+npx skills add dontbesilent2025/dbskill
+"""
+        result = clean_tweet_text(text)
+        assert result.splitlines()[0] == "我的推文做成了 skill"
+
+    def test_remove_tco_links(self):
+        """去掉 t.co 短链，避免正文混入无意义跳转链接。"""
+        text = """我的推文做成了 skill
+https://t.co/E9MeMerSYx
+
+这些框架从 12307 条推文中提炼而来 https://t.co/ZtEbYenkiw
+"""
+        result = clean_tweet_text(text)
+        assert "https://t.co/" not in result
+        assert "这些框架从 12307 条推文中提炼而来" in result
 
 
 class TestExtractArticleTitle:
@@ -230,3 +321,27 @@ class TestFilterContentImages:
         assert len(result) == 2
         assert "profile_images" not in result[0]
         assert "profile_images" not in result[1]
+
+
+class TestShellDetection:
+    """页面壳子检测测试"""
+
+    def test_detects_x_article_shell(self):
+        raw_content = """# 极客杰尼 on X: "我把公众号排版Skill上架到了ClawHub" / X
+
+Don't miss what's happening
+People on X are the first to know.
+See new posts
+[](https://x.com/seekjourney/article/2035923833707012270)
+"""
+        assert is_probable_x_shell(raw_content, "") is True
+
+    def test_keeps_real_article_content(self):
+        raw_content = """Don't miss what's happening
+[](https://x.com/vista8/article/2035544573876023605)
+硅谷顶级PM的方法论免费开源！附Skill和32m资源包下载
+
+一、痴迷于客户与问题
+"""
+        cleaned = "硅谷顶级PM的方法论免费开源！附Skill和32m资源包下载\n\n一、痴迷于客户与问题"
+        assert is_probable_x_shell(raw_content, cleaned) is False

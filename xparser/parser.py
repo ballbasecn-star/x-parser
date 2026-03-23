@@ -10,9 +10,32 @@ from typing import Optional, Callable
 from .models import TweetInfo, ParseResult
 from .url_detector import detect_url, URLInfo
 from .crawler import TavilyCrawler, create_crawler
+from .utils import is_probable_x_shell
 
 
 logger = logging.getLogger(__name__)
+
+
+def _has_extractable_content(tweet: TweetInfo) -> bool:
+    """避免把只有 tweet id 的空结果当成成功解析。"""
+    results = tweet.raw_data.get("results")
+    raw_content = ""
+    if isinstance(results, list) and results:
+        first_result = results[0] or {}
+        if isinstance(first_result, dict):
+            raw_content = (first_result.get("raw_content") or "").strip()
+
+    cleaned_content = (tweet.content_clean or "").strip()
+    is_shell = is_probable_x_shell(raw_content, cleaned_content)
+
+    if cleaned_content and not is_shell:
+        return True
+
+    raw_text = (tweet.content or "").strip()
+    if raw_text and not is_shell:
+        return True
+
+    return False
 
 
 def parse(
@@ -92,6 +115,12 @@ def parse(
 
     if not tweet_info:
         result.error = "获取推文失败"
+        result.processing_time = time.time() - start_time
+        emit_log(f"❌ {result.error}", "error")
+        return result
+
+    if not _has_extractable_content(tweet_info):
+        result.error = "正文提取为空"
         result.processing_time = time.time() - start_time
         emit_log(f"❌ {result.error}", "error")
         return result
@@ -189,6 +218,11 @@ class Parser:
 
         if not tweet_info:
             result.error = "获取推文失败"
+            result.processing_time = time.time() - start_time
+            return result
+
+        if not _has_extractable_content(tweet_info):
+            result.error = "正文提取为空"
             result.processing_time = time.time() - start_time
             return result
 

@@ -116,6 +116,97 @@ curl -X POST http://localhost:5000/api/v1/parse \
   -d '{"requestId":"req_demo","input":{"sourceUrl":"https://x.com/elonmusk/status/123456789","platformHint":"x"}}'
 ```
 
+## 发布脚本
+
+当前仓库已经补齐“本地构建镜像 -> 导出镜像包 -> 上传服务器部署”的三段脚本：
+
+```bash
+./scripts/build-release-image.sh
+./scripts/export-release-bundle.sh
+./scripts/deploy-prebuilt-release.sh
+```
+
+部署时需要先准备：
+
+- `deploy/.env.prod`
+- 服务器目录，默认 `/root/apps/parsers/x-parser`
+- 共享 Docker 网络 `content-shared`
+
+## 契约与失败语义
+
+`x-parser` 当前遵循统一 parser 契约，但需要特别注意一条约束：
+
+- 只要 Tavily 没有提取到可用正文，就不能把结果伪装成成功
+- 此时应该返回明确失败，而不是只返回 `tweet_id`、空正文和空 `rawData`
+
+当前本地实现已经补上这条规则：
+
+- 当正文提取为空时，`/api/v1/parse` 返回：
+  - HTTP `422`
+  - `error.code = UPSTREAM_CHANGED`
+  - `error.message = 正文提取为空`
+
+这样主系统可以明确识别“上游内容提取失败”，而不是把它当作一个可阅读内容继续入库和展示。
+
+## 已知真实样本
+
+当前有一个已经验证过的真实样本：
+
+- `https://x.com/naval/status/1765427439452942630`
+
+本地真实返回结论：
+
+- Tavily 当前对该样本返回空结果
+- `x-parser` 现已显式返回失败，而不是伪成功
+
+对应统一契约返回示例：
+
+```json
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "UPSTREAM_CHANGED",
+    "message": "正文提取为空",
+    "retryable": true
+  },
+  "meta": {
+    "requestId": "req_local_real_x",
+    "parserVersion": "0.1.0"
+  }
+}
+```
+
+这份样本用于后续回归，避免每次都先在线上主系统里反复排查。
+
+补充两个 `X article` 本地回归样本：
+
+- 成功样本：
+  - `https://x.com/vista8/status/2035544573876023605`
+  - 当前本地可返回 `200`
+  - 已能提取出正文主体，适合用来回归 article 正文清洗
+- 壳子失败样本：
+  - `https://x.com/seekjourney/status/2035923833707012270`
+  - 当前本地应返回 `422 / UPSTREAM_CHANGED / 正文提取为空`
+  - 用于防止“只抓到 X 登录页壳子也被误判成功”
+
+继续补充两条稳定可用的 `X article` 清洗回归样本：
+
+- `https://x.com/boniusex/status/2035630916668907740`
+  - 当前本地返回 `200`
+  - 标题已稳定提取为 `Claude + Obsidian = 一个真正的 AI 员工`
+  - 适合回归长文型 article 的正文段落清洗
+- `https://x.com/aikangarooking/status/2035978244567306276`
+  - 当前本地返回 `200`
+  - 标题已稳定提取为 `耗时1天，开发了个信息聚合平台IdeaHub，已免费开源～`
+  - 适合回归中文长文 article 的正文分段展示
+
+当前另有一个短帖样本：
+
+- `https://x.com/dontbesilent/status/2035077391266324525`
+  - 这条更接近短帖，不纳入本轮 `X article` 正文清洗目标
+  - 后续如果要做短帖展示策略，再单独回归
+
 ## 项目结构
 
 ```
@@ -185,6 +276,12 @@ pytest
 
 # 带覆盖率
 pytest --cov=xparser
+```
+
+当前补充的最小回归建议：
+
+```bash
+pytest tests/test_parser_contract_api.py tests/test_parser_content_quality.py
 ```
 
 ## 注意事项

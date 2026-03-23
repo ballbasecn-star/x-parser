@@ -86,3 +86,28 @@ def test_parser_parse_rejects_unsupported_url():
     body = response.get_json()
     assert body['success'] is False
     assert body['error']['code'] == 'UNSUPPORTED_URL'
+
+
+@patch('web.app.parse')
+def test_parser_parse_returns_upstream_changed_when_content_missing(mock_parse):
+    client = app.test_client()
+    mock_parse.return_value = ParseResult(
+        success=False,
+        error='正文提取为空',
+    )
+
+    response = client.post(
+        '/api/v1/parse',
+        json={
+            'requestId': 'req_x_empty_body',
+            'input': {
+                'sourceUrl': 'https://x.com/test/status/1234567890',
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    body = response.get_json()
+    assert body['success'] is False
+    assert body['error']['code'] == 'UPSTREAM_CHANGED'
+    assert body['error']['message'] == '正文提取为空'
