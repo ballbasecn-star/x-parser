@@ -27,6 +27,17 @@ except ImportError:
     pass
 
 from xparser.parser import parse, ParseResult
+from web.parser_contract import (
+    UnsupportedUrlError,
+    build_capabilities_payload,
+    build_health_payload,
+    contract_error_response,
+    contract_success_response,
+    create_request_id,
+    extract_language_hint,
+    resolve_source_url,
+    to_parsed_content_payload,
+)
 
 
 # 配置日志
@@ -220,6 +231,47 @@ def parse_tweet_api():
             "success": False,
             "error": str(e)
         }), 500
+
+
+@app.route("/api/v1/health", methods=["GET"])
+def parser_health():
+    """统一 parser 健康检查"""
+    return contract_success_response(create_request_id(), build_health_payload())
+
+
+@app.route("/api/v1/capabilities", methods=["GET"])
+def parser_capabilities():
+    """统一 parser 能力声明"""
+    return contract_success_response(create_request_id(), build_capabilities_payload())
+
+
+@app.route("/api/v1/parse", methods=["POST"])
+def parser_parse():
+    """统一 parser 解析入口"""
+    payload = request.get_json(silent=True)
+    request_id = ((payload or {}).get("requestId") or "").strip() or create_request_id()
+
+    try:
+        url = resolve_source_url(payload)
+    except UnsupportedUrlError as exc:
+        return contract_error_response(request_id, "UNSUPPORTED_URL", str(exc), 400, retryable=False)
+    except ValueError as exc:
+        return contract_error_response(request_id, "INVALID_INPUT", str(exc), 400, retryable=False)
+
+    try:
+        result: ParseResult = parse(url)
+        if not result.success:
+            return contract_error_response(
+                request_id,
+                "UPSTREAM_CHANGED",
+                result.error or "解析失败",
+                422,
+                retryable=True,
+            )
+        return contract_success_response(request_id, to_parsed_content_payload(result, extract_language_hint(payload)))
+    except Exception as e:
+        logger.exception("统一 parser 解析失败")
+        return contract_error_response(request_id, "INTERNAL_ERROR", str(e), 500, retryable=True)
 
 
 @app.route("/health", methods=["GET"])
