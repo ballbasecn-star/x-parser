@@ -293,3 +293,121 @@ pytest tests/test_parser_contract_api.py tests/test_parser_content_quality.py
 ## License
 
 MIT
+
+## 镜像构建与线上更新
+
+当前仓库的生产发布固定采用“本地构建镜像 -> 本地导出 bundle -> 上传服务器并重启”的方式。
+
+### 前置条件
+
+本地需要具备：
+
+- Docker / Docker Buildx
+- 可用的 `TAVILY_API_KEY`
+- 已安装 `ssh`、`scp`
+- 如果使用密码登录，还需要 `sshpass`
+
+服务器默认目录：
+
+```text
+/root/apps/parsers/x-parser/
+  deploy/
+  images/
+```
+
+### 1. 准备生产环境文件
+
+先复制模板：
+
+```bash
+cd /Users/apple/Workspace/linker-platform/parsers/x-parser/deploy
+cp .env.prod.example .env.prod
+```
+
+至少确认这些配置：
+
+- `TAVILY_API_KEY`
+- `X_PARSER_HOST_PORT`
+
+### 2. 本地构建镜像
+
+```bash
+cd /Users/apple/Workspace/linker-platform/parsers/x-parser
+IMAGE_TAG=20260323-<git短提交> ./scripts/build-release-image.sh
+```
+
+可选覆盖参数：
+
+- `TARGET_PLATFORM`，默认 `linux/amd64`
+- `X_PARSER_IMAGE`，默认 `ballbase/x-parser`
+
+### 3. 导出镜像 bundle
+
+```bash
+cd /Users/apple/Workspace/linker-platform/parsers/x-parser
+IMAGE_TAG=20260323-<git短提交> ./scripts/export-release-bundle.sh
+```
+
+导出结果默认在：
+
+```text
+.tmp/release/<IMAGE_TAG>/
+```
+
+其中包含：
+
+- `images/x-parser.tar`
+- `deploy/compose.prod.yaml`
+- `deploy/.env.prod.example`
+- `deploy/release.env`
+
+### 4. 上传服务器并更新
+
+```bash
+cd /Users/apple/Workspace/linker-platform/parsers/x-parser
+DEPLOY_HOST=117.72.207.52 \
+DEPLOY_USER=root \
+DEPLOY_PASSWORD='服务器密码' \
+DEPLOY_ENV_FILE=deploy/.env.prod \
+IMAGE_TAG=20260323-<git短提交> \
+./scripts/deploy-prebuilt-release.sh
+```
+
+脚本默认会把服务部署到：
+
+```text
+/root/apps/parsers/x-parser
+```
+
+如需覆盖，可设置：
+
+- `DEPLOY_BASE_DIR`
+- `DEPLOY_PORT`
+
+### 5. 发布后验证
+
+服务器本机验证：
+
+```bash
+curl -sS http://127.0.0.1:5000/api/v1/health
+curl -sS http://127.0.0.1:5000/api/v1/capabilities
+```
+
+主系统联调验证：
+
+```bash
+curl -sS https://linker.ballbase.cloud/api/v1/system/parsers
+```
+
+### 6. 回滚
+
+重新指定旧版本 `IMAGE_TAG` 再执行一遍部署脚本：
+
+```bash
+DEPLOY_HOST=117.72.207.52 \
+DEPLOY_USER=root \
+DEPLOY_PASSWORD='服务器密码' \
+DEPLOY_ENV_FILE=deploy/.env.prod \
+IMAGE_TAG=<旧版本号> \
+./scripts/deploy-prebuilt-release.sh
+```
