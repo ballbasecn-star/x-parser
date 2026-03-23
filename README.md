@@ -102,18 +102,18 @@ gunicorn -w 4 -b 0.0.0.0:5000 web.app:app
 
 | 端点 | 方法 | 描述 |
 |------|------|------|
-| `/health` | GET | 健康检查 |
+| `/api/v1/health` | GET | 统一契约健康检查 |
 | `/check-key` | GET | 检查 API Key 配置 |
-| `/parse` | POST | 解析推文 |
-| `/parse/batch` | POST | 批量解析 |
+| `/api/v1/parse` | POST | 统一契约解析推文 |
+| `/api/v1/capabilities` | GET | 统一契约能力声明 |
 
 **示例请求：**
 
 ```bash
 # 解析推文
-curl -X POST http://localhost:5000/parse \
+curl -X POST http://localhost:5000/api/v1/parse \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://x.com/elonmusk/status/123456789"}'
+  -d '{"requestId":"req_demo","input":{"sourceUrl":"https://x.com/elonmusk/status/123456789","platformHint":"x"}}'
 ```
 
 ## 项目结构

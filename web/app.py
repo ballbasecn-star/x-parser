@@ -9,8 +9,8 @@ Flask Web 服务 - HTTP API 接口 + 可视化页面
 API 端点:
     GET  /                - 可视化页面
     GET  /parse           - 解析推文（可视化展示）
-    POST /api/parse       - 解析推文（JSON API）
-    GET  /health          - 健康检查
+    POST /api/v1/parse    - 统一契约解析推文（JSON API）
+    GET  /api/v1/health   - 统一契约健康检查
     GET  /check-key       - 检查 API Key 配置
 """
 import logging
@@ -178,61 +178,6 @@ def parse_page():
     )
 
 
-@app.route("/api/parse", methods=["POST"])
-def parse_tweet_api():
-    """
-    解析推文 (JSON API)
-
-    请求体:
-        {
-            "url": "https://x.com/username/status/123456789"
-        }
-
-    响应:
-        {
-            "success": true,
-            "content": "...",
-            "metrics": { ... }
-        }
-    """
-    # 获取请求数据
-    data = request.get_json()
-
-    if not data:
-        return jsonify({
-            "success": False,
-            "error": "请求体不能为空"
-        }), 400
-
-    url = data.get("url")
-    if not url:
-        return jsonify({
-            "success": False,
-            "error": "缺少 url 参数"
-        }), 400
-
-    # 解析推文
-    logger.info(f"解析请求: {url}")
-
-    try:
-        result: ParseResult = parse(url)
-
-        if not result.success:
-            return jsonify({
-                "success": False,
-                "error": result.error
-            }), 400
-
-        return jsonify(result.to_dict())
-
-    except Exception as e:
-        logger.exception("解析失败")
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
-
-
 @app.route("/api/v1/health", methods=["GET"])
 def parser_health():
     """统一 parser 健康检查"""
@@ -274,16 +219,6 @@ def parser_parse():
         return contract_error_response(request_id, "INTERNAL_ERROR", str(e), 500, retryable=True)
 
 
-@app.route("/health", methods=["GET"])
-def health():
-    """健康检查"""
-    return jsonify({
-        "status": "ok",
-        "service": "x-parser",
-        "version": "1.0.0"
-    })
-
-
 @app.route("/check-key", methods=["GET"])
 def check_key():
     """检查 API Key 配置"""
@@ -292,59 +227,6 @@ def check_key():
         "configured": bool(api_key),
         "key_length": len(api_key) if api_key else 0
     })
-
-
-@app.route("/parse", methods=["POST"])
-def parse_tweet():
-    """
-    解析推文 (兼容旧 API)
-    """
-    return parse_tweet_api()
-
-
-@app.route("/parse/batch", methods=["POST"])
-def parse_batch():
-    """
-    批量解析推文
-
-    请求体:
-        {
-            "urls": ["url1", "url2", ...]
-        }
-    """
-    from xparser.parser import parse_batch
-
-    data = request.get_json()
-
-    if not data:
-        return jsonify({
-            "success": False,
-            "error": "请求体不能为空"
-        }), 400
-
-    urls = data.get("urls")
-    if not urls or not isinstance(urls, list):
-        return jsonify({
-            "success": False,
-            "error": "缺少 urls 参数或格式错误"
-        }), 400
-
-    logger.info(f"批量解析请求: {len(urls)} 个 URL")
-
-    try:
-        results = parse_batch(urls)
-        return jsonify({
-            "success": True,
-            "total": len(results),
-            "results": [r.to_dict() for r in results]
-        })
-
-    except Exception as e:
-        logger.exception("批量解析失败")
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
 
 
 @app.errorhandler(404)
@@ -373,8 +255,8 @@ def main():
 ║        X/Twitter Parser Service          ║
 ╠══════════════════════════════════════════╣
 ║  可视化:  http://0.0.0.0:{port:<5}              ║
-║  API:     POST /api/parse                 ║
-║  健康检查: GET  /health                   ║
+║  API:     POST /api/v1/parse              ║
+║  健康检查: GET  /api/v1/health            ║
 ╚══════════════════════════════════════════╝
     """)
 
